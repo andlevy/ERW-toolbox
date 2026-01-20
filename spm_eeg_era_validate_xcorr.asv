@@ -1,0 +1,138 @@
+function [D,ERA,S] = spm_eeg_era_validate_xcorr(S)
+
+
+
+%-Startup
+%--------------------------------------------------------------------------
+spm('sFnBanner', mfilename);
+spm_figure('FindWin','Interactive'); spm_clf('Interactive');
+
+%-Get MEEG object
+%--------------------------------------------------------------------------
+try
+    D = S.D;
+catch
+    [D, sts] = spm_select(1, 'mat', 'Select M/EEG mat file');
+    S.D = D;
+end
+D = spm_eeg_load(D);
+
+% Get ERA structure
+%--------------------------------------------------------------------------
+ERA = spm_era_load(S.ERA);
+
+
+% Calculate channel cross correlation
+%------------------------------------
+% Y   = [];
+V   = struct();
+Ic  = D.indchantype('EEG','GOOD');
+LN  = nan(length(D.indchantype('EEG')),length(D.indchantype('EEG')),2);
+XCOV.LL          = {};
+XCOV.LM          = {};
+% XCOV.av_labels   = JOB.averages;
+% XCOV.cond_labels = JOB.xcorr.conds;
+
+for is = 1:numel(S.conds)
+
+    % Get data
+    %---------------------------------------------
+    Ie          = D.indtrial({S.conds(is).warp, S.conds(is).ref});
+    It          = D.indsample(S.timewin(1)):D.indsample(S.timewin(2));
+    Y           = D(Ic,It,Ie);
+
+    [Nc,Nt,Ne]  = size(Y);
+    maxlag      = S.xcorr_maxlag /(1/D.fsample);
+    lags        = (-maxlag:maxlag) *(1/D.fsample);
+    Ycov        = zeros(Nc,Nc,length(lags),2);
+
+    for i = 1:Nc
+        for j = 1:Nc
+            for k = 1:2
+                Ycov(i,j,:,k) = xcov(squeeze(Y(i,:,k)), squeeze(Y(j,:,k)), maxlag, 'coeff');
+            end
+        end
+    end
+
+    % Identify max xcorr and lag
+    [M,I]            = max(abs(Ycov),[],3);
+    M                = squeeze(M);
+    I                = squeeze(I);
+    L                = lags(I);
+
+
+    LD = []; LM =[]; LR =[];
+    xc = S.xcorr_thresh;
+    for ix = 1:length(xc)
+
+        % prune 'spurious' correlations
+        mask               = all((abs(M)<xc(ix) & abs(LX) < 1/30),3);
+        LX                 = L;
+        % LX(abs(M)<xc(ix))  = 0;
+        % LX(abs(LX) < 1/30) = 0;
+        LX(~mask)          = 0;
+
+        % establish lag lead directions (differences to reference)
+        LL                 = sign(LX);
+        LD(:,:,ix)         = LL(:,:,1) == LL(:,:,2);
+
+        % establish lag lead magnitudes (differences to reference)
+        LM(:,:,ix)         = diff(LX,1,3);
+
+        % reference signal
+        LR(:,:,ix)         = LX(:,:,2);
+
+        % store
+        XCOV.LL{ix}          = LN;
+        XCOV.LX{ix}          = LN;
+        XCOV.LL{ix}(Ic,Ic,:) = LL;
+        XCOV.LX{ix}(Ic,Ic,:) = LX;
+
+    end
+
+    XCOV.L(Ic,Ic,:)  = L;
+    LC                   = squeeze(sum(LD,[1 2])./numel(LD(:,:,1)));
+    LE                   = squeeze(sqrt(mean(LM.^2,[1 2]))) ./squeeze(std(LR,0,'all'))
+
+     LE                   = squeeze(sqrt(mean(LM(mask).^2,[1 2]))) ./squeeze(std(LR(mask),0,'all'))
+
+    % Package
+    %----------------------------------------------------------------------
+
+    % High level variables
+    %----------------------
+    V(is).type                = 'xcov';
+    V(is).cond_warp           = S.conds(is).warp;
+    V(is).cond_ref            = S.conds(is).ref;
+    V(is).metric_type         = 'nRMSE';
+    V(is).metric              = LE;
+  
+    % Low level variables
+    %--------------------
+    V(is).aux = struct( ...
+        'proportion', LC,...
+        'lags',lags,...
+        'corr_thresh',xc,...
+        'XCOV',XCOV );
+
+end
+
+% ERA.Validate.XCOV     = XCOV;
+
+if isfield(ERA,'V')
+    ERA.V   = spm_cat_struct(ERA.V,V);
+else
+    ERA.V    = V;
+end
+
+% Save ERA
+%--------------------------------------------------------------------------
+save(fullfile(ERA.swd,ERA.name),'ERA')
+% save(fullfile(ERA.swd,'COV.mat'),'XCOV')
+
+%-Cleanup
+%--------------------------------------------------------------------------
+spm_progress_bar('Clear');
+fprintf('%-40s: %30s\n','Completed',spm('time'));                       %-#
+spm('FigName','M/EEG cross correlation error: done'); spm('Pointer','Arrow');
+

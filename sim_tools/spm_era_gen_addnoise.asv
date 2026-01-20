@@ -1,0 +1,47 @@
+function Y = spm_era_gen_addnoise(noise,Y)
+
+signal_std = std(Y,0,1);
+
+N = {};
+for n = 1:numel(noise)
+
+    % Generate noise
+    %----------------------------------------------------------------------
+    switch lower(noise(n).type)
+
+        case 'pink'
+
+            b       = [0.049922, -0.095993, 0.050612, -0.004408];
+            a       = [1, -2.494956, 2.017265, -0.522189];
+            e       = randn(size(Y'));
+            N{n}    = filter(b, a, e, [], 2)';
+
+        case 'ar1'
+
+            phi     = 0.98;
+            e       = randn(size(Y')) * 1;
+            N{n}    = filter(1, [1, -phi], e, [], 2)';
+
+    end
+
+
+    % Scale noise
+    %------------------------------------------------------------------
+    noise_std   = std(N{n},0,1);
+    scale       =(signal_std ./ noise_std) 
+    N{n}        = N{n} .* ;  % scale per channel
+
+  
+
+end
+
+% Add noise
+%------------------------------------------------------------------
+for n = 1:numel(N)
+
+    Y = Y + N{n};
+end
+
+
+
+
